@@ -1,0 +1,226 @@
+"""Client for the MyChildAtSchool (Bromcom MCAS) parent portal.
+
+MCAS is an ASP.NET WebForms site, but the pages talk to a real ``api/v1`` REST
+backend through a single generic proxy web service. Authenticating is therefore a
+WebForms form post, after which every data call is a POST to that proxy carrying
+the backend path. See const.py for the routes.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from datetime import date
+
+from bs4 import BeautifulSoup
+
+from .const import (
+    BASE_URL,
+    DASHBOARD_MARKER,
+    EP_ATTENDANCE,
+    EP_BEHAVIOUR,
+    EP_DETENTIONS,
+    EP_DINNER,
+    EP_STUDENT_YEARS,
+    EP_USER_DETAILS,
+    LOGIN_PATH,
+    PRESENT_MARK_SIGNS,
+    PROXY_PATH,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+# The proxy reports a bad path as HTTP 200 with this string in "d", so it has to be
+# sniffed rather than caught as an error.
+_NOT_FOUND = "Error 404"
+_HIDDEN_RE = re.compile(r'<input[^>]*type="hidden"[^>]*>', re.I)
+_NAME_RE = re.compile(r'name="([^"]+)"', re.I)
+_VALUE_RE = re.compile(r'value="([^"]*)"', re.I)
+_STUDENT_NAME_RE = re.compile(r'id="[^"]*StudentName[^"]*"[^>]*>([^<]{2,80})', re.I)
+_MASTER_VAR_RE = re.compile(r"var\s+(master_[A-Za-z]+)\s*=\s*\"?([^\";\n]{0,80})")
+
+
+class MCASAuthError(Exception):
+    """Credentials were rejected."""
+
+
+class MCASError(Exception):
+    """Any other failure talking to MCAS."""
+
+
+@dataclass
+class AttendanceDay:
+    """One school day's registration marks."""
+
+    day: date
+    periods: list[dict] = field(default_factory=list)
+
+    @property
+    def present(self) -> bool | None:
+        """True if every recorded period counts as in school. None if no marks."""
+        if not self.periods:
+            return None
+        return all(p.get("MarkSign") in PRESENT_MARK_SIGNS for p in self.periods)
+
+    @property
+    def summary(self) -> str:
+        if not self.periods:
+            return "No data"
+        return ", ".join(
+            f"{p.get('PeriodName')}: {p.get('MarkMeaning')}" for p in self.periods
+        )
+
+
+class MCASClient:
+    """Synchronous MCAS client. Run it in an executor from Home Assistant."""
+
+    def __init__(self, session, email: str, password: str) -> None:
+        self._s = session
+        self._email = email
+        self._password = password
+        self.student_id: int | None = None
+        self.school_id: int | None = None
+        self.school_name: str | None = None
+        self.student_name: str | None = None
+        self.year_id: int | None = None
+
+    # ---------------------------------------------------------------- auth
+
+    def login(self) -> None:
+        """Perform the WebForms login and capture the pupil context."""
+        url = f"{BASE_URL}{LOGIN_PATH}"
+        page = self._s.get(url, timeout=30)
+        form = self._hidden_fields(page.text)
+        if not form:
+            raise MCASError("Login page had no hidden fields; layout may have changed")
+        form["EmailTextBox"] = self._email
+        form["PasswordTextBox"] = self._password
+        resp = self._s.post(url, data=form, timeout=30)
+        if DASHBOARD_MARKER not in resp.url:
+            # MCAS re-renders the login page rather than returning an error status.
+            raise MCASAuthError("Login failed - check the email address and password")
+        self._read_dashboard_context(resp.text)
+
+    @staticmethod
+    def _hidden_fields(html: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for tag in _HIDDEN_RE.findall(html):
+            name = _NAME_RE.search(tag)
+            if not name:
+                continue
+            value = _VALUE_RE.search(tag)
+            out[name.group(1)] = value.group(1) if value else ""
+        return out
+
+    def _read_dashboard_context(self, html: str) -> None:
+        """Pull ids and the pupil name straight off the dashboard.
+
+        The page defines master_studentid / master_schoolID as plain JS vars, which
+        is cheaper and more reliable than deriving them from the API, and it is the
+        only place the pupil's name appears at all.
+        """
+        variables = dict(_MASTER_VAR_RE.findall(html))
+        if sid := variables.get("master_studentid"):
+            self.student_id = int(sid)
+        if school := variables.get("master_schoolID"):
+            self.school_id = int(school)
+        self.school_name = variables.get("master_schoolName")
+        if match := _STUDENT_NAME_RE.search(html):
+            name = match.group(1).strip()
+            # Rendered "Surname, Forename" in the header.
+            if "," in name:
+                surname, _, forename = name.partition(",")
+                name = f"{forename.strip()} {surname.strip()}".strip()
+            self.student_name = name
+
+    # ---------------------------------------------------------------- core
+
+    def _get(self, path: str):
+        """Call a backend api/v1 path through the portal's proxy."""
+        resp = self._s.post(
+            f"{BASE_URL}{PROXY_PATH}",
+            json={"url": path, "schoolID": "", "contactID": ""},
+            headers={"Content-Type": "application/json;charset=utf-8"},
+            timeout=30,
+        )
+        if resp.status_code == 401 or DASHBOARD_MARKER in resp.text[:200]:
+            raise MCASAuthError("Session expired")
+        if resp.status_code != 200:
+            raise MCASError(f"{path} -> HTTP {resp.status_code}")
+        payload = resp.json().get("d")
+        if payload in (None, ""):
+            return None
+        if isinstance(payload, str) and payload.startswith(_NOT_FOUND):
+            # Wrong path, or the wrong number of path parameters.
+            _LOGGER.debug("MCAS reported no such route: %s", path)
+            return None
+        try:
+            return json.loads(payload)
+        except (ValueError, TypeError):
+            return payload  # an HTML fragment
+
+    def ensure_session(self) -> None:
+        """Re-login if the session has lapsed."""
+        if self.student_id is None:
+            self.login()
+
+    # ------------------------------------------------------------ fetchers
+
+    def user_details(self) -> dict | None:
+        return self._get(EP_USER_DETAILS)
+
+    def load_year_id(self) -> int | None:
+        """Current academic YearID, needed by the behaviour endpoint."""
+        data = self._get(EP_STUDENT_YEARS.format(sid=self.student_id))
+        rows = (data or {}).get("Table") or []
+        if rows:
+            self.year_id = rows[0].get("YearID")
+        return self.year_id
+
+    def attendance(self, day: date) -> AttendanceDay:
+        """Registration marks for one day. MCAS serves a single day per call."""
+        data = self._get(
+            EP_ATTENDANCE.format(sid=self.student_id, y=day.year, m=day.month, d=day.day)
+        )
+        rows = (data or {}).get("Table") or [] if isinstance(data, dict) else []
+        return AttendanceDay(day=day, periods=rows)
+
+    def behaviour(self, day: date) -> list[dict]:
+        """Behaviour events for one day. Returned as an HTML table, so parsed."""
+        if self.year_id is None:
+            self.load_year_id()
+        html = self._get(
+            EP_BEHAVIOUR.format(
+                sid=self.student_id, yid=self.year_id, y=day.year, m=day.month, d=day.day
+            )
+        )
+        return self._parse_behaviour(html)
+
+    @staticmethod
+    def _parse_behaviour(html) -> list[dict]:
+        if not html or not isinstance(html, str):
+            return []
+        soup = BeautifulSoup(html, "html.parser")
+        headers = [th.get_text(strip=True) for th in soup.select("thead th")]
+        events: list[dict] = []
+        for row in soup.select("tbody tr"):
+            cells = [td.get_text(" ", strip=True) for td in row.find_all("td")]
+            if not cells:
+                continue
+            events.append(dict(zip(headers, cells)) if headers else {"Event": cells[-1]})
+        return events
+
+    def detentions(self) -> list[dict]:
+        data = self._get(EP_DETENTIONS.format(sid=self.student_id))
+        if not isinstance(data, dict):
+            return []
+        return data.get("Detention") or []
+
+    def dinner_balance(self) -> float | None:
+        """Credit balance, scraped from the dashboard widget's HTML."""
+        html = self._get(EP_DINNER.format(sid=self.student_id))
+        if not html or not isinstance(html, str):
+            return None
+        match = re.search(r"£\s*(-?[\d,]+\.\d{2})", html)
+        return float(match.group(1).replace(",", "")) if match else None

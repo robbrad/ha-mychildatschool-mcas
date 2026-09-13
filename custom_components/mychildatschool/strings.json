@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MyChildAtSchool",
+        "description": "Sign in with your MyChildAtSchool parent account.",
+        "data": { "email": "Email address", "password": "Password" }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email address or password.",
+      "cannot_connect": "Could not reach MyChildAtSchool."
+    },
+    "abort": { "already_configured": "This pupil is already configured." }
+  }
+}
