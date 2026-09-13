@@ -1,4 +1,5 @@
 """Constants for the MyChildAtSchool (MCAS) integration."""
+
 from datetime import timedelta
 
 DOMAIN = "mychildatschool"
@@ -30,8 +31,9 @@ EP_DINNER = "api/v1/mcas/dashboard/GetDinnerBalanceWidgetData/{sid}"
 EP_CONFIGURATIONS = "api/v1/mcas/configurations"
 # Schools license MCAS modules individually. Creating sensors for modules the
 # school has switched off produces entities that are permanently zero and read as
-# authoritative when they are not - the dinner balance in particular reports 0.00
-# here while catering actually runs through SCOPAY.
+# authoritative when they are not. The dinner balance is the clearest case: a
+# school that takes catering payments through a different provider still reports a
+# confident 0.00 here, which is worse than having no sensor at all.
 MODULE_FLAGS = {
     "attendance": "MCASAttendanceModuleEnabled",
     "behaviour": "MCASBehaviourModuleEnabled",

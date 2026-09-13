@@ -5,13 +5,14 @@ backend through a single generic proxy web service. Authenticating is therefore 
 WebForms form post, after which every data call is a POST to that proxy carrying
 the backend path. See const.py for the routes.
 """
+
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import logging
 import re
 from dataclasses import dataclass, field
-import datetime as _dt
 from datetime import date
 
 from bs4 import BeautifulSoup
@@ -19,20 +20,20 @@ from bs4 import BeautifulSoup
 from .const import (
     BASE_URL,
     DASHBOARD_MARKER,
+    DAY_STATUS,
     EP_ATTENDANCE,
     EP_BEHAVIOUR,
     EP_BEHAVIOUR_DETAIL,
-    EP_DETENTIONS,
     EP_CLUBS,
     EP_CONFIGURATIONS,
+    EP_DETENTIONS,
     EP_DINNER,
     EP_REPORTS,
-    PAGE_TIMETABLE,
-    DAY_STATUS,
-    MODULE_FLAGS,
     EP_STUDENT_YEARS,
     EP_USER_DETAILS,
     LOGIN_PATH,
+    MODULE_FLAGS,
+    PAGE_TIMETABLE,
     PRESENT_MARK_SIGNS,
     PROXY_PATH,
 )
@@ -49,11 +50,17 @@ _STUDENT_NAME_RE = re.compile(r'id="[^"]*StudentName[^"]*"[^>]*>([^<]{2,80})', r
 _MASTER_VAR_RE = re.compile(r"var\s+(master_[A-Za-z]+)\s*=\s*\"?([^\";\n]{0,80})")
 
 
-_DAY_HEADER_RE = re.compile(r"([A-Z][a-z]+)\s*(\d{1,2})(?:st|nd|rd|th)?\s*([A-Z][a-z]{2})")
+_DAY_HEADER_RE = re.compile(
+    r"([A-Z][a-z]+)\s*(\d{1,2})(?:st|nd|rd|th)?\s*([A-Z][a-z]{2})"
+)
 
 
 def _parse_day_header(header: str):
-    """"Monday14th Sep" -> ("Monday", "2026-09-14" or None if the year is ambiguous)."""
+    """Turn a timetable column header into a day name and ISO date.
+
+    "Monday14th Sep" becomes ("Monday", "2026-09-14"). The header carries no year,
+    so the nearest one within six months of today is assumed.
+    """
     match = _DAY_HEADER_RE.search(header or "")
     if not match:
         return (header, None)
@@ -101,6 +108,7 @@ class AttendanceDay:
 
     @property
     def summary(self) -> str:
+        """Human-readable list of the day's marks, one per period."""
         if not self.periods:
             return "No data"
         return ", ".join(
@@ -112,6 +120,7 @@ class MCASClient:
     """Synchronous MCAS client. Run it in an executor from Home Assistant."""
 
     def __init__(self, session, email: str, password: str) -> None:
+        """Store the session and credentials; no network access happens here."""
         self._s = session
         self._email = email
         self._password = password
@@ -189,7 +198,11 @@ class MCASClient:
             return None
         if isinstance(payload, str) and payload.startswith(_NOT_FOUND):
             # Wrong path, or the wrong number of path parameters.
-            _LOGGER.debug("MCAS reported no such route: %s", path)
+            # Redact ids: paths embed the student and school id, and debug logs
+            # get pasted into issue reports.
+            _LOGGER.debug(
+                "MCAS reported no such route: %s", re.sub(r"\d{3,}", "<id>", path)
+            )
             return None
         try:
             return json.loads(payload)
@@ -204,6 +217,7 @@ class MCASClient:
     # ------------------------------------------------------------ fetchers
 
     def user_details(self) -> dict | None:
+        """The signed-in parent and the pupils attached to the account."""
         return self._get(EP_USER_DETAILS)
 
     def load_year_id(self) -> int | None:
@@ -217,7 +231,9 @@ class MCASClient:
     def attendance(self, day: date) -> AttendanceDay:
         """Registration marks for one day. MCAS serves a single day per call."""
         data = self._get(
-            EP_ATTENDANCE.format(sid=self.student_id, y=day.year, m=day.month, d=day.day)
+            EP_ATTENDANCE.format(
+                sid=self.student_id, y=day.year, m=day.month, d=day.day
+            )
         )
         rows = (data or {}).get("Table") or [] if isinstance(data, dict) else []
         return AttendanceDay(day=day, periods=rows)
@@ -228,7 +244,11 @@ class MCASClient:
             self.load_year_id()
         html = self._get(
             EP_BEHAVIOUR.format(
-                sid=self.student_id, yid=self.year_id, y=day.year, m=day.month, d=day.day
+                sid=self.student_id,
+                yid=self.year_id,
+                y=day.year,
+                m=day.month,
+                d=day.day,
             )
         )
         return self._parse_behaviour(html)
@@ -244,7 +264,11 @@ class MCASClient:
             cells = [td.get_text(" ", strip=True) for td in row.find_all("td")]
             if not cells:
                 continue
-            events.append(dict(zip(headers, cells)) if headers else {"Event": cells[-1]})
+            events.append(
+                dict(zip(headers, cells, strict=False))
+                if headers
+                else {"Event": cells[-1]}
+            )
         return events
 
     def behaviour_year(self) -> dict:
@@ -336,7 +360,9 @@ class MCASClient:
         lessons: list[dict] = []
         for table in soup.find_all("table"):
             headers = [th.get_text(" ", strip=True) for th in table.find_all("th")]
-            if not headers or not any(d in " ".join(headers) for d in ("Monday", "Tuesday")):
+            if not headers or not any(
+                d in " ".join(headers) for d in ("Monday", "Tuesday")
+            ):
                 continue
             days = [_parse_day_header(h) for h in headers]
             for row in table.find_all("tr")[1:]:
@@ -346,7 +372,9 @@ class MCASClient:
                     divs = cell.find_all("div")
                     if len(divs) < 3:
                         continue
-                    values = [d.get("title") or d.get_text(" ", strip=True) for d in divs]
+                    values = [
+                        d.get("title") or d.get_text(" ", strip=True) for d in divs
+                    ]
                     period, subject = values[0], values[2] if len(values) > 2 else None
                     if not subject:
                         continue
@@ -364,14 +392,17 @@ class MCASClient:
         return lessons
 
     def reports(self) -> list[dict]:
+        """School reports published to the parent."""
         data = self._get(EP_REPORTS.format(sid=self.student_id))
         return (data or {}).get("Table") or [] if isinstance(data, dict) else []
 
     def clubs_and_trips(self) -> list[dict]:
+        """Clubs and trips the pupil is enrolled on."""
         data = self._get(EP_CLUBS.format(sid=self.student_id))
         return (data or {}).get("Table") or [] if isinstance(data, dict) else []
 
     def detentions(self) -> list[dict]:
+        """Detentions recorded for the pupil."""
         data = self._get(EP_DETENTIONS.format(sid=self.student_id))
         if not isinstance(data, dict):
             return []

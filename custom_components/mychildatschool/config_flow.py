@@ -1,8 +1,8 @@
 """Config flow for MyChildAtSchool."""
+
 from __future__ import annotations
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession  # noqa: F401
 
@@ -18,6 +18,7 @@ class MCASConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
+        """Collect the portal login and verify it before creating the entry."""
         errors: dict[str, str] = {}
         if user_input is not None:
             try:

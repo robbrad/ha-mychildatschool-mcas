@@ -1,4 +1,5 @@
 """Sensors for MyChildAtSchool."""
+
 from __future__ import annotations
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
@@ -54,7 +55,9 @@ class MCASEntity(CoordinatorEntity[MCASCoordinator], SensorEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator: MCASCoordinator, entry: ConfigEntry, key: str) -> None:
+    def __init__(
+        self, coordinator: MCASCoordinator, entry: ConfigEntry, key: str
+    ) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.unique_id}_{key}"
         self._attr_device_info = DeviceInfo(
@@ -169,7 +172,9 @@ class BehaviourPointsSensor(MCASEntity):
         by_type: dict[str, int] = {}
         for event in events:
             subject = event.get("subject") or "Unknown"
-            by_subject[subject] = by_subject.get(subject, 0) + (event.get("points") or 0)
+            by_subject[subject] = by_subject.get(subject, 0) + (
+                event.get("points") or 0
+            )
             kind = event.get("type") or "Unknown"
             by_type[kind] = by_type.get(kind, 0) + 1
         points.update(

@@ -1,0 +1,97 @@
+name: Release - Bump Version
+
+on:
+  push:
+    branches: [ "master" ]
+    paths-ignore:
+      - "**/*.md"
+      - ".github/workflows/**"
+  workflow_dispatch: {}
+
+jobs:
+  bump:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: bump
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install Commitizen
+        run: pip install commitizen
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version and create tag
+        id: bump
+        run: |
+          if cz bump --yes --changelog --dry-run 2>&1 | grep -q "No commits found"; then
+            echo "No version bump needed - no conventional commits since last release"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          cz bump --yes --changelog
+          echo "version=$(cz version --project)" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Push changes and tags
+        id: push
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          # master can move while this run is bumping - a second push landing
+          # moments later is enough. The concurrency group serialises runs, so
+          # a newer one will redo the bump including those commits. Stand down
+          # rather than fight over the ref or force-push over someone's work.
+          if git push origin master; then
+            git push origin --tags
+            echo "raced=false" >> $GITHUB_OUTPUT
+          else
+            echo "raced=true" >> $GITHUB_OUTPUT
+            echo "master moved during the bump; a later run will redo it"
+          fi
+
+      # A tag pushed with GITHUB_TOKEN does not trigger release.yml, so cut the
+      # release here rather than requiring a deploy key just for that hop.
+      - name: Build HACS zip
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          cd custom_components/mychildatschool
+          zip -r "$GITHUB_WORKSPACE/mychildatschool.zip" . -x '*__pycache__*'
+
+      - name: Create GitHub release
+        if: steps.bump.outputs.skip != 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.bump.outputs.version }}
+          generateReleaseNotes: true
+          allowUpdates: true
+          artifacts: "mychildatschool.zip"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create workflow summary
+        if: always()
+        run: |
+          echo "## Bump Summary" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.bump.outputs.skip }}" == "true" ]; then
+            echo "- **Status**: Skipped (no conventional commits)" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.push.outputs.raced }}" == "true" ]; then
+            echo "- **Status**: Stood down (master moved; a later run will bump)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Status**: Success" >> $GITHUB_STEP_SUMMARY
+            echo "- **New Version**: ${{ steps.bump.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          fi

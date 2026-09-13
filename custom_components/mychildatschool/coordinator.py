@@ -1,12 +1,13 @@
 """Coordinator for MyChildAtSchool."""
+
 from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import AttendanceDay, MCASAuthError, MCASClient, MCASError
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, WEEK_LOOKBACK_DAYS
@@ -40,6 +41,7 @@ class MCASCoordinator(DataUpdateCoordinator):
     """
 
     def __init__(self, hass: HomeAssistant, client: MCASClient) -> None:
+        """Set up the coordinator and the per-day caches."""
         super().__init__(
             hass, _LOGGER, name=DOMAIN, update_interval=DEFAULT_SCAN_INTERVAL
         )
@@ -89,12 +91,12 @@ class MCASCoordinator(DataUpdateCoordinator):
         calendar = behaviour_year["calendar"]
         timetable = client.timetable()
         today_iso = today.isoformat()
-        lessons_today = [l for l in timetable if l.get("date") == today_iso]
+        lessons_today = [x for x in timetable if x.get("date") == today_iso]
         # No lesson times are published, only period labels, so "next" is the first
         # lesson of the next timetabled day rather than the next period from now.
         upcoming = sorted(
-            (l for l in timetable if (l.get("date") or "") > today_iso),
-            key=lambda l: (l["date"], _period_order(l.get("period"))),
+            (x for x in timetable if (x.get("date") or "") > today_iso),
+            key=lambda x: (x["date"], _period_order(x.get("period"))),
         )
 
         return {
@@ -115,7 +117,11 @@ class MCASCoordinator(DataUpdateCoordinator):
             "behaviour_year_name": behaviour_year["year_name"],
             "day_type": calendar.get(today_iso),
             "next_school_day": next(
-                (d for d in sorted(calendar) if d > today_iso and calendar[d] == "School day"),
+                (
+                    d
+                    for d in sorted(calendar)
+                    if d > today_iso and calendar[d] == "School day"
+                ),
                 None,
             ),
             "timetable": timetable,
