@@ -22,6 +22,7 @@ async def async_setup_entry(
             AttendanceTodaySensor(coordinator, entry),
             AttendancePercentSensor(coordinator, entry),
             BehaviourEventsSensor(coordinator, entry),
+            BehaviourPointsSensor(coordinator, entry),
             DetentionsSensor(coordinator, entry),
             DinnerBalanceSensor(coordinator, entry),
         ]
@@ -123,6 +124,44 @@ class BehaviourEventsSensor(MCASEntity):
     def extra_state_attributes(self) -> dict:
         events = self.coordinator.data.get("behaviour_events") or []
         return {"events": events[:20]}
+
+
+class BehaviourPointsSensor(MCASEntity):
+    """Behaviour points for the academic year."""
+
+    _attr_icon = "mdi:star-circle"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "points"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "behaviour_points")
+        self._attr_name = "Behaviour points"
+
+    @property
+    def native_value(self):
+        return (self.coordinator.data.get("behaviour_points") or {}).get("total")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        points = dict(self.coordinator.data.get("behaviour_points") or {})
+        events = self.coordinator.data.get("behaviour_year_events") or []
+        by_subject: dict[str, int] = {}
+        by_type: dict[str, int] = {}
+        for event in events:
+            subject = event.get("subject") or "Unknown"
+            by_subject[subject] = by_subject.get(subject, 0) + (event.get("points") or 0)
+            kind = event.get("type") or "Unknown"
+            by_type[kind] = by_type.get(kind, 0) + 1
+        points.update(
+            {
+                "academic_year": self.coordinator.data.get("behaviour_year_name"),
+                "events_this_year": len(events),
+                "points_by_subject": {k: v for k, v in sorted(by_subject.items()) if v},
+                "events_by_type": by_type,
+                "recent": events[:10],
+            }
+        )
+        return points
 
 
 class DetentionsSensor(MCASEntity):

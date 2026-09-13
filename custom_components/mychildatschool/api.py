@@ -20,6 +20,7 @@ from .const import (
     DASHBOARD_MARKER,
     EP_ATTENDANCE,
     EP_BEHAVIOUR,
+    EP_BEHAVIOUR_DETAIL,
     EP_DETENTIONS,
     EP_DINNER,
     EP_STUDENT_YEARS,
@@ -39,6 +40,14 @@ _NAME_RE = re.compile(r'name="([^"]+)"', re.I)
 _VALUE_RE = re.compile(r'value="([^"]*)"', re.I)
 _STUDENT_NAME_RE = re.compile(r'id="[^"]*StudentName[^"]*"[^>]*>([^<]{2,80})', re.I)
 _MASTER_VAR_RE = re.compile(r"var\s+(master_[A-Za-z]+)\s*=\s*\"?([^\";\n]{0,80})")
+
+
+def _as_int(value) -> int | None:
+    """Totals arrive as strings, and "N/A" when the school hides that figure."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 class MCASAuthError(Exception):
@@ -210,6 +219,57 @@ class MCASClient:
                 continue
             events.append(dict(zip(headers, cells)) if headers else {"Event": cells[-1]})
         return events
+
+    def behaviour_year(self) -> dict:
+        """Whole-year behaviour in one call: points, events and a subject lookup.
+
+        Strongly preferred over walking eventstable day by day - it is JSON rather
+        than an HTML fragment, it is one request instead of one per day, and it is
+        the only source of the points totals. `Adjustment` is the points value for
+        an event; summing it reproduces the "Overall Total Points" figure shown on
+        the portal's behaviour page.
+        """
+        if self.year_id is None:
+            self.load_year_id()
+        data = self._get(
+            EP_BEHAVIOUR_DETAIL.format(sid=self.student_id, yid=self.year_id)
+        )
+        if not isinstance(data, dict):
+            return {"events": [], "points": {}, "subjects": {}}
+
+        subjects = {
+            row.get("SubjectID"): row.get("SubjectName")
+            for row in data.get("Table3") or []
+        }
+        events = []
+        for row in data.get("Table") or []:
+            events.append(
+                {
+                    "date": row.get("EventDate"),
+                    "type": row.get("EventType"),
+                    "points": row.get("Adjustment") or 0,
+                    "subject": subjects.get(row.get("SubjectID")),
+                    "id": row.get("EventRecordID"),
+                }
+            )
+        events.sort(key=lambda e: e["date"] or "", reverse=True)
+
+        totals = (data.get("Table4") or [{}])[0]
+        positive = sum(e["points"] for e in events if e["type"] == "Positive")
+        negative = sum(e["points"] for e in events if e["type"] == "Negative")
+        return {
+            "events": events,
+            "subjects": subjects,
+            "year_name": ((data.get("Table2") or [{}])[0]).get("YearName"),
+            "points": {
+                "total": positive - abs(negative),
+                "positive": positive,
+                "negative": abs(negative),
+                "all_time_total": _as_int(totals.get("ShowTotalPointsAllTime")),
+                "all_time_positive": _as_int(totals.get("PositivePointsAllTime")),
+                "all_time_negative": _as_int(totals.get("NegativePointsAllTime")),
+            },
+        }
 
     def detentions(self) -> list[dict]:
         data = self._get(EP_DETENTIONS.format(sid=self.student_id))

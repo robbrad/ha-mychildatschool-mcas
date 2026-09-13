@@ -10,7 +10,8 @@ detentions and dinner balance as sensors.
 | --- | --- |
 | `Attendance today` | `Present` / `Not present` / `No data`, with each period's mark as attributes |
 | `Attendance this week` | Percentage of recorded school days present in the last 7 days |
-| `Behaviour events` | Count of behaviour events in the last 7 days, with the events as attributes |
+| `Behaviour events` | Count of behaviour events in the last 7 days, with the events (including the behaviour level, e.g. "Lesson Mark 1: Above Expected Attitude and Behaviour") as attributes |
+| `Behaviour points` | Behaviour points for the academic year, with positive/negative splits, all-time totals, a per-subject breakdown and the most recent events |
 | `Detentions` | Outstanding detentions |
 | `Dinner balance` | Dinner money credit balance (GBP) |
 

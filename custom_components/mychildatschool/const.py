@@ -17,6 +17,13 @@ EP_STUDENT_YEARS = "api/v1/mcas/homework/studentYears/{sid}"
 # tableRawData is the JSON sibling of .../table/ (which returns an HTML fragment).
 EP_ATTENDANCE = "api/v1/attendance/mcas/tableRawData/{sid}/{y}/{m}/{d}/-1"
 EP_BEHAVIOUR = "api/v1/eventRecords/mcas/eventstable/{sid}/{yid}/{y}/{m}/{d}/-1"
+# The whole academic year in one JSON call, and much richer than the per-day HTML:
+#   Table  - every behaviour event (EventType, Adjustment = points, SubjectID)
+#   Table1 - school calendar day status codes
+#   Table2 - year name
+#   Table3 - SubjectID -> SubjectName/colour lookup
+#   Table4 - all-time points totals
+EP_BEHAVIOUR_DETAIL = "api/v1/eventRecords/mcas/eventdetails/{sid}/{yid}"
 EP_DETENTIONS = "api/v1/detentions/mcas/{sid}"
 EP_DINNER = "api/v1/mcas/dashboard/GetDinnerBalanceWidgetData/{sid}"
 

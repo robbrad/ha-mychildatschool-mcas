@@ -67,6 +67,8 @@ class MCASCoordinator(DataUpdateCoordinator):
         for day in window:
             events.extend(self._behaviour.get(day, []))
 
+        behaviour_year = client.behaviour_year()
+
         return {
             "student_name": client.student_name,
             "school_name": client.school_name,
@@ -75,7 +77,14 @@ class MCASCoordinator(DataUpdateCoordinator):
             "attendance_pct": (
                 round(len(present) / len(recorded) * 100, 1) if recorded else None
             ),
+            # Recent events carry the human-readable level ("Lesson Mark 1: Above
+            # Expected Attitude and Behaviour") which only the HTML view exposes.
             "behaviour_events": events,
+            # Points, totals and the subject breakdown come from the year-wide JSON
+            # call, which is both richer and cheaper than walking days.
+            "behaviour_points": behaviour_year["points"],
+            "behaviour_year_events": behaviour_year["events"],
+            "behaviour_year_name": behaviour_year["year_name"],
             "detentions": client.detentions(),
             "dinner_balance": client.dinner_balance(),
         }
