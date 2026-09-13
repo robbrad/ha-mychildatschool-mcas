@@ -27,6 +27,22 @@ EP_BEHAVIOUR_DETAIL = "api/v1/eventRecords/mcas/eventdetails/{sid}/{yid}"
 EP_DETENTIONS = "api/v1/detentions/mcas/{sid}"
 EP_DINNER = "api/v1/mcas/dashboard/GetDinnerBalanceWidgetData/{sid}"
 
+EP_CONFIGURATIONS = "api/v1/mcas/configurations"
+# Schools license MCAS modules individually. Creating sensors for modules the
+# school has switched off produces entities that are permanently zero and read as
+# authoritative when they are not - the dinner balance in particular reports 0.00
+# here while catering actually runs through SCOPAY.
+MODULE_FLAGS = {
+    "attendance": "MCASAttendanceModuleEnabled",
+    "behaviour": "MCASBehaviourModuleEnabled",
+    "detentions": "MCASEnableDetentions",
+    "timetable": "MCASTimetableModuleEnabled",
+    "reports": "MCASReportsModuleEnabled",
+    "dinner": "MCASDinnerMoneyModule_EnableDinnerMoneyModule",
+    "clubs": "MCASClubsModuleEnabled",
+    "trips": "MCASTripsModuleEnabled",
+}
+
 EP_REPORTS = "api/v1/studentDetails/reports/{sid}"
 EP_CLUBS = "api/v1/mcas/clubsandtrips/StudentClubsAndTrips/{sid}"
 # The timetable and academic calendar pages are server-rendered - no API call

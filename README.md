@@ -41,8 +41,13 @@ only available as an HTML fragment and are parsed with BeautifulSoup.
 ## Notes
 
 - One MCAS login covers one pupil; the pupil's student ID is used as the unique ID.
-- If the school hasn't enabled a module for parents, the related sensor will read
-  zero or `No data` rather than erroring.
+- **Sensors are only created for modules your school has enabled.** Schools license
+  MCAS modules individually, and the integration reads that configuration at setup.
+  A sensor that could only ever read zero is worse than no sensor, because it looks
+  authoritative - a school running catering through a different provider would
+  otherwise show a permanent £0.00 dinner balance.
+- `Attendance today` reads `No data` at weekends, during holidays and before
+  morning registration. That is normal, not a failure - pair it with `School day`.
 
 ## Disclaimer
 

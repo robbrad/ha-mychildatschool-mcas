@@ -44,6 +44,7 @@ class MCASCoordinator(DataUpdateCoordinator):
             hass, _LOGGER, name=DOMAIN, update_interval=DEFAULT_SCAN_INTERVAL
         )
         self.client = client
+        self.modules: dict[str, bool] | None = None
         self._attendance: dict[date, AttendanceDay] = {}
         self._behaviour: dict[date, list[dict]] = {}
 
@@ -65,6 +66,8 @@ class MCASCoordinator(DataUpdateCoordinator):
     def _fetch(self) -> dict:
         client = self.client
         client.ensure_session()
+        if self.modules is None:
+            self.modules = client.modules()
         today = date.today()
         volatile = {today, today - timedelta(days=1)}
 
@@ -118,8 +121,14 @@ class MCASCoordinator(DataUpdateCoordinator):
             "timetable": timetable,
             "lessons_today": lessons_today,
             "next_lesson": upcoming[0] if upcoming else None,
-            "reports": client.reports(),
-            "clubs_and_trips": client.clubs_and_trips(),
+            "reports": client.reports() if self.modules.get("reports") else [],
+            "clubs_and_trips": (
+                client.clubs_and_trips()
+                if self.modules.get("clubs") or self.modules.get("trips")
+                else []
+            ),
             "detentions": client.detentions(),
-            "dinner_balance": client.dinner_balance(),
+            "dinner_balance": (
+                client.dinner_balance() if self.modules.get("dinner") else None
+            ),
         }

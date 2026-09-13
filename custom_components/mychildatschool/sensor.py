@@ -17,21 +17,36 @@ async def async_setup_entry(
 ) -> None:
     """Set up the MCAS sensors."""
     coordinator: MCASCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
+    modules = coordinator.modules or {}
+
+    # Only create entities for modules the school has enabled. A sensor that can
+    # only ever read zero is worse than no sensor: it looks authoritative.
+    entities: list[SensorEntity] = [SchoolDaySensor(coordinator, entry)]
+    if modules.get("attendance", True):
+        entities += [
             AttendanceTodaySensor(coordinator, entry),
             AttendancePercentSensor(coordinator, entry),
+        ]
+    if modules.get("behaviour", True):
+        entities += [
             BehaviourEventsSensor(coordinator, entry),
             BehaviourPointsSensor(coordinator, entry),
-            DetentionsSensor(coordinator, entry),
-            DinnerBalanceSensor(coordinator, entry),
-            SchoolDaySensor(coordinator, entry),
+        ]
+    if modules.get("detentions", True):
+        entities.append(DetentionsSensor(coordinator, entry))
+    if modules.get("timetable", True):
+        entities += [
             LessonsTodaySensor(coordinator, entry),
             NextLessonSensor(coordinator, entry),
-            ReportsSensor(coordinator, entry),
-            ClubsAndTripsSensor(coordinator, entry),
         ]
-    )
+    if modules.get("reports", True):
+        entities.append(ReportsSensor(coordinator, entry))
+    if modules.get("clubs") or modules.get("trips"):
+        entities.append(ClubsAndTripsSensor(coordinator, entry))
+    if modules.get("dinner"):
+        entities.append(DinnerBalanceSensor(coordinator, entry))
+
+    async_add_entities(entities)
 
 
 class MCASEntity(CoordinatorEntity[MCASCoordinator], SensorEntity):

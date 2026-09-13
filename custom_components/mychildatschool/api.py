@@ -24,10 +24,12 @@ from .const import (
     EP_BEHAVIOUR_DETAIL,
     EP_DETENTIONS,
     EP_CLUBS,
+    EP_CONFIGURATIONS,
     EP_DINNER,
     EP_REPORTS,
     PAGE_TIMETABLE,
     DAY_STATUS,
+    MODULE_FLAGS,
     EP_STUDENT_YEARS,
     EP_USER_DETAILS,
     LOGIN_PATH,
@@ -297,6 +299,20 @@ class MCASClient:
                 "all_time_negative": _as_int(totals.get("NegativePointsAllTime")),
             },
         }
+
+    def modules(self) -> dict[str, bool]:
+        """Which MCAS modules this school has switched on.
+
+        Used to avoid creating entities that can only ever read zero. Values come
+        back as the strings "True"/"False" with inconsistent casing.
+        """
+        data = self._get(EP_CONFIGURATIONS)
+        rows = (data or {}).get("Table") or [] if isinstance(data, dict) else []
+        config = {r.get("KeyName"): str(r.get("KeyValue")) for r in rows}
+        enabled = {}
+        for name, key in MODULE_FLAGS.items():
+            enabled[name] = config.get(key, "").strip().lower() == "true"
+        return enabled
 
     def calendar(self, table1: list[dict]) -> dict[str, str]:
         """Map ISO date -> day type from the behaviour payload's calendar table."""
