@@ -181,8 +181,16 @@ class MCASClient:
 
     # ---------------------------------------------------------------- core
 
-    def _get(self, path: str):
-        """Call a backend api/v1 path through the portal's proxy."""
+    def _get(self, path: str, _retry: bool = True):
+        """Call a backend api/v1 path through the portal's proxy.
+
+        An expired session is not reported as a 401 or a redirect to the login
+        page - the proxy raises server-side and returns **HTTP 500** with a generic
+        ASP.NET error body. That is indistinguishable from a real server fault, so
+        the only reliable response is to log in again and retry once: if the retry
+        succeeds the session had simply lapsed, and if the fresh login fails the
+        credentials are genuinely wrong.
+        """
         resp = self._s.post(
             f"{BASE_URL}{PROXY_PATH}",
             json={"url": path, "schoolID": "", "contactID": ""},
@@ -191,6 +199,10 @@ class MCASClient:
         )
         if resp.status_code == 401 or DASHBOARD_MARKER in resp.text[:200]:
             raise MCASAuthError("Session expired")
+        if resp.status_code == 500 and _retry:
+            _LOGGER.debug("Proxy returned 500; re-authenticating and retrying once")
+            self.login()  # raises MCASAuthError if the credentials no longer work
+            return self._get(path, _retry=False)
         if resp.status_code != 200:
             raise MCASError(f"{path} -> HTTP {resp.status_code}")
         payload = resp.json().get("d")
@@ -356,6 +368,9 @@ class MCASClient:
         which is what gets used; the visible text is ellipsised.
         """
         resp = self._s.get(f"{BASE_URL}{PAGE_TIMETABLE}", timeout=30)
+        if "MCSParentLogin" in resp.url:
+            # Bounced to the login page: the session has lapsed.
+            raise MCASAuthError("Session expired")
         soup = BeautifulSoup(resp.text, "html.parser")
         lessons: list[dict] = []
         for table in soup.find_all("table"):

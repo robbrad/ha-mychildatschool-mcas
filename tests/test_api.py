@@ -9,6 +9,7 @@ import responses
 from custom_components.mychildatschool.api import (
     MCASAuthError,
     MCASClient,
+    MCASError,
     _parse_day_header,
 )
 from custom_components.mychildatschool.const import BASE_URL, LOGIN_PATH, PROXY_PATH
@@ -279,3 +280,73 @@ def test_dinner_balance_scrapes_the_widget(client, html, expected):
 )
 def test_parse_day_header(header, day):
     assert _parse_day_header(header)[0] == day
+
+
+@responses.activate
+def test_expired_session_relogins_and_retries(client, login_html, dashboard_html):
+    """A lapsed session shows up as HTTP 500, not a 401 or a login redirect."""
+    responses.add(responses.POST, PROXY_URL, status=500, body="server error")
+    responses.add(responses.GET, LOGIN_URL, body=login_html, status=200)
+    responses.add(
+        responses.POST,
+        LOGIN_URL,
+        status=302,
+        headers={"Location": DASHBOARD_URL},
+        body="",
+    )
+    responses.add(responses.GET, DASHBOARD_URL, body=dashboard_html, status=200)
+    responses.add(responses.POST, PROXY_URL, json={"d": '{"ok": true}'}, status=200)
+
+    assert client._get("api/v1/anything") == {"ok": True}
+    # It re-authenticated rather than surfacing the 500 as a fatal error.
+    assert client.student_id == STUDENT_ID
+
+
+@responses.activate
+def test_expired_session_with_bad_password_raises_auth_error(client, login_html):
+    """After a password change the retry must fail as auth, not as a server fault.
+
+    Getting this wrong leaves the integration retrying forever instead of asking
+    for the new password.
+    """
+    responses.add(responses.POST, PROXY_URL, status=500, body="server error")
+    responses.add(responses.GET, LOGIN_URL, body=login_html, status=200)
+    responses.add(responses.POST, LOGIN_URL, body=login_html, status=200)
+    with pytest.raises(MCASAuthError):
+        client._get("api/v1/anything")
+
+
+@responses.activate
+def test_persistent_500_after_relogin_is_a_server_error(
+    client, login_html, dashboard_html
+):
+    """A genuine server fault should not be misreported as bad credentials."""
+    responses.add(responses.POST, PROXY_URL, status=500, body="server error")
+    responses.add(responses.GET, LOGIN_URL, body=login_html, status=200)
+    responses.add(
+        responses.POST,
+        LOGIN_URL,
+        status=302,
+        headers={"Location": DASHBOARD_URL},
+        body="",
+    )
+    responses.add(responses.GET, DASHBOARD_URL, body=dashboard_html, status=200)
+    responses.add(responses.POST, PROXY_URL, status=500, body="server error")
+
+    with pytest.raises(MCASError):
+        client._get("api/v1/anything")
+
+
+@responses.activate
+def test_timetable_detects_a_bounce_to_the_login_page(client):
+    # A lapsed session 302s the page request back to the login form.
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/MCAS/MCSTimetable.aspx",
+        status=302,
+        headers={"Location": LOGIN_URL},
+        body="",
+    )
+    responses.add(responses.GET, LOGIN_URL, body="<html>login</html>", status=200)
+    with pytest.raises(MCASAuthError):
+        client.timetable()
