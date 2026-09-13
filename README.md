@@ -1,5 +1,9 @@
 # MyChildAtSchool (MCAS) for Home Assistant
 
+[![hacs](https://img.shields.io/badge/HACS-custom-41BDF5.svg)](https://hacs.xyz)
+[![lint](https://github.com/robbrad/ha-mychildatschool-mcas/actions/workflows/lint.yml/badge.svg)](https://github.com/robbrad/ha-mychildatschool-mcas/actions/workflows/lint.yml)
+[![tests](https://github.com/robbrad/ha-mychildatschool-mcas/actions/workflows/tests.yml/badge.svg)](https://github.com/robbrad/ha-mychildatschool-mcas/actions/workflows/tests.yml)
+
 Home Assistant integration for the [MyChildAtSchool](https://www.mychildatschool.com)
 parent portal (Bromcom MCAS), exposing your child's attendance, behaviour,
 detentions and dinner balance as sensors.
