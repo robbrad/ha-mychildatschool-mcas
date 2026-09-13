@@ -14,6 +14,21 @@ from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, WEEK_LOOKBACK_DAYS
 _LOGGER = logging.getLogger(__name__)
 
 
+def _period_order(period) -> tuple[int, str]:
+    """Sort periods chronologically.
+
+    Periods are labelled "Tutor", "1", "2"... so a plain string sort puts Tutor
+    last when it is actually morning registration, and would order period 10 before
+    period 2. Numbered periods sort numerically after Tutor.
+    """
+    text = str(period or "").strip()
+    if text.isdigit():
+        return (1, f"{int(text):03d}")
+    if text.lower().startswith("tutor"):
+        return (0, "")
+    return (2, text.lower())
+
+
 class MCASCoordinator(DataUpdateCoordinator):
     """Fetch pupil data, keeping calls on the portal to a minimum.
 
@@ -68,6 +83,16 @@ class MCASCoordinator(DataUpdateCoordinator):
             events.extend(self._behaviour.get(day, []))
 
         behaviour_year = client.behaviour_year()
+        calendar = behaviour_year["calendar"]
+        timetable = client.timetable()
+        today_iso = today.isoformat()
+        lessons_today = [l for l in timetable if l.get("date") == today_iso]
+        # No lesson times are published, only period labels, so "next" is the first
+        # lesson of the next timetabled day rather than the next period from now.
+        upcoming = sorted(
+            (l for l in timetable if (l.get("date") or "") > today_iso),
+            key=lambda l: (l["date"], _period_order(l.get("period"))),
+        )
 
         return {
             "student_name": client.student_name,
@@ -85,6 +110,16 @@ class MCASCoordinator(DataUpdateCoordinator):
             "behaviour_points": behaviour_year["points"],
             "behaviour_year_events": behaviour_year["events"],
             "behaviour_year_name": behaviour_year["year_name"],
+            "day_type": calendar.get(today_iso),
+            "next_school_day": next(
+                (d for d in sorted(calendar) if d > today_iso and calendar[d] == "School day"),
+                None,
+            ),
+            "timetable": timetable,
+            "lessons_today": lessons_today,
+            "next_lesson": upcoming[0] if upcoming else None,
+            "reports": client.reports(),
+            "clubs_and_trips": client.clubs_and_trips(),
             "detentions": client.detentions(),
             "dinner_balance": client.dinner_balance(),
         }

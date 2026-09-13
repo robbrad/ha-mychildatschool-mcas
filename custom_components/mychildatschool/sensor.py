@@ -25,6 +25,11 @@ async def async_setup_entry(
             BehaviourPointsSensor(coordinator, entry),
             DetentionsSensor(coordinator, entry),
             DinnerBalanceSensor(coordinator, entry),
+            SchoolDaySensor(coordinator, entry),
+            LessonsTodaySensor(coordinator, entry),
+            NextLessonSensor(coordinator, entry),
+            ReportsSensor(coordinator, entry),
+            ClubsAndTripsSensor(coordinator, entry),
         ]
     )
 
@@ -197,3 +202,97 @@ class DinnerBalanceSensor(MCASEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("dinner_balance")
+
+
+class SchoolDaySensor(MCASEntity):
+    """What kind of day today is, per the school's own calendar."""
+
+    _attr_icon = "mdi:calendar-check"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "school_day")
+        self._attr_name = "School day"
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("day_type") or "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"next_school_day": self.coordinator.data.get("next_school_day")}
+
+
+class LessonsTodaySensor(MCASEntity):
+    """Lessons timetabled for today."""
+
+    _attr_icon = "mdi:timetable"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "lessons_today")
+        self._attr_name = "Lessons today"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.data.get("lessons_today") or [])
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"lessons": self.coordinator.data.get("lessons_today") or []}
+
+
+class NextLessonSensor(MCASEntity):
+    """First lesson of the next timetabled day."""
+
+    _attr_icon = "mdi:chevron-right-circle"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "next_lesson")
+        self._attr_name = "Next lesson"
+
+    @property
+    def native_value(self):
+        lesson = self.coordinator.data.get("next_lesson")
+        return lesson.get("subject") if lesson else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return self.coordinator.data.get("next_lesson") or {}
+
+
+class ReportsSensor(MCASEntity):
+    """School reports available to view."""
+
+    _attr_icon = "mdi:file-document"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "reports")
+        self._attr_name = "Reports"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.data.get("reports") or [])
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"reports": self.coordinator.data.get("reports") or []}
+
+
+class ClubsAndTripsSensor(MCASEntity):
+    """Clubs and trips the pupil is enrolled on."""
+
+    _attr_icon = "mdi:bus"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "clubs_and_trips")
+        self._attr_name = "Clubs and trips"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.data.get("clubs_and_trips") or [])
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"items": self.coordinator.data.get("clubs_and_trips") or []}

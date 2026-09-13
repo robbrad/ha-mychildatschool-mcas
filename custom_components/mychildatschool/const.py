@@ -27,6 +27,17 @@ EP_BEHAVIOUR_DETAIL = "api/v1/eventRecords/mcas/eventdetails/{sid}/{yid}"
 EP_DETENTIONS = "api/v1/detentions/mcas/{sid}"
 EP_DINNER = "api/v1/mcas/dashboard/GetDinnerBalanceWidgetData/{sid}"
 
+EP_REPORTS = "api/v1/studentDetails/reports/{sid}"
+EP_CLUBS = "api/v1/mcas/clubsandtrips/StudentClubsAndTrips/{sid}"
+# The timetable and academic calendar pages are server-rendered - no API call
+# exists for them, so the week grid is parsed out of the page itself.
+PAGE_TIMETABLE = "/MCAS/MCSTimetable.aspx"
+
+# DayStatusCode values in the behaviour year payload's calendar table. Decoded by
+# correlating a full year against weekdays: 187 "-" days is a normal UK school year,
+# and the 6 "$" days match a school's INSET allocation.
+DAY_STATUS = {"-": "School day", "*": "Weekend", "#": "Holiday", "$": "Staff day"}
+
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 

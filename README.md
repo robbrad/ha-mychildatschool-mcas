@@ -14,6 +14,11 @@ detentions and dinner balance as sensors.
 | `Behaviour points` | Behaviour points for the academic year, with positive/negative splits, all-time totals, a per-subject breakdown and the most recent events |
 | `Detentions` | Outstanding detentions |
 | `Dinner balance` | Dinner money credit balance (GBP) |
+| `School day` | Whether today is a `School day`, `Weekend`, `Holiday` or `Staff day`, per the school's own calendar, plus the next school day |
+| `Lessons today` | Number of timetabled lessons today, with subject, class and teacher as attributes |
+| `Next lesson` | Subject of the next timetabled lesson, with day, period, class and teacher |
+| `Reports` | School reports available to view |
+| `Clubs and trips` | Clubs and trips the pupil is enrolled on |
 
 ## Installation
 

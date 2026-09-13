@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+import datetime as _dt
 from datetime import date
 
 from bs4 import BeautifulSoup
@@ -22,7 +23,11 @@ from .const import (
     EP_BEHAVIOUR,
     EP_BEHAVIOUR_DETAIL,
     EP_DETENTIONS,
+    EP_CLUBS,
     EP_DINNER,
+    EP_REPORTS,
+    PAGE_TIMETABLE,
+    DAY_STATUS,
     EP_STUDENT_YEARS,
     EP_USER_DETAILS,
     LOGIN_PATH,
@@ -40,6 +45,26 @@ _NAME_RE = re.compile(r'name="([^"]+)"', re.I)
 _VALUE_RE = re.compile(r'value="([^"]*)"', re.I)
 _STUDENT_NAME_RE = re.compile(r'id="[^"]*StudentName[^"]*"[^>]*>([^<]{2,80})', re.I)
 _MASTER_VAR_RE = re.compile(r"var\s+(master_[A-Za-z]+)\s*=\s*\"?([^\";\n]{0,80})")
+
+
+_DAY_HEADER_RE = re.compile(r"([A-Z][a-z]+)\s*(\d{1,2})(?:st|nd|rd|th)?\s*([A-Z][a-z]{2})")
+
+
+def _parse_day_header(header: str):
+    """"Monday14th Sep" -> ("Monday", "2026-09-14" or None if the year is ambiguous)."""
+    match = _DAY_HEADER_RE.search(header or "")
+    if not match:
+        return (header, None)
+    name, day, month = match.groups()
+    today = date.today()
+    for year in (today.year, today.year + 1, today.year - 1):
+        try:
+            parsed = _dt.datetime.strptime(f"{day} {month} {year}", "%d %b %Y").date()
+        except ValueError:
+            continue
+        if abs((parsed - today).days) <= 180:
+            return (name, parsed.isoformat())
+    return (name, None)
 
 
 def _as_int(value) -> int | None:
@@ -235,7 +260,7 @@ class MCASClient:
             EP_BEHAVIOUR_DETAIL.format(sid=self.student_id, yid=self.year_id)
         )
         if not isinstance(data, dict):
-            return {"events": [], "points": {}, "subjects": {}}
+            return {"events": [], "points": {}, "subjects": {}, "calendar": {}}
 
         subjects = {
             row.get("SubjectID"): row.get("SubjectName")
@@ -254,12 +279,14 @@ class MCASClient:
             )
         events.sort(key=lambda e: e["date"] or "", reverse=True)
 
+        calendar = self.calendar(data.get("Table1"))
         totals = (data.get("Table4") or [{}])[0]
         positive = sum(e["points"] for e in events if e["type"] == "Positive")
         negative = sum(e["points"] for e in events if e["type"] == "Negative")
         return {
             "events": events,
             "subjects": subjects,
+            "calendar": calendar,
             "year_name": ((data.get("Table2") or [{}])[0]).get("YearName"),
             "points": {
                 "total": positive - abs(negative),
@@ -270,6 +297,63 @@ class MCASClient:
                 "all_time_negative": _as_int(totals.get("NegativePointsAllTime")),
             },
         }
+
+    def calendar(self, table1: list[dict]) -> dict[str, str]:
+        """Map ISO date -> day type from the behaviour payload's calendar table."""
+        out: dict[str, str] = {}
+        for row in table1 or []:
+            day = (row.get("Day") or "")[:10]
+            if day:
+                out[day] = DAY_STATUS.get(row.get("DayStatusCode"), "Unknown")
+        return out
+
+    def timetable(self) -> list[dict]:
+        """Parse the rendered weekly timetable grid.
+
+        There is no API route for this - MCSTimetable.aspx is server-rendered - so
+        the grid is read from the page. Each cell is a stack of divs (period, school,
+        subject, class, teacher) whose `title` attributes hold the untruncated text,
+        which is what gets used; the visible text is ellipsised.
+        """
+        resp = self._s.get(f"{BASE_URL}{PAGE_TIMETABLE}", timeout=30)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        lessons: list[dict] = []
+        for table in soup.find_all("table"):
+            headers = [th.get_text(" ", strip=True) for th in table.find_all("th")]
+            if not headers or not any(d in " ".join(headers) for d in ("Monday", "Tuesday")):
+                continue
+            days = [_parse_day_header(h) for h in headers]
+            for row in table.find_all("tr")[1:]:
+                for index, cell in enumerate(row.find_all("td")):
+                    if index >= len(days):
+                        break
+                    divs = cell.find_all("div")
+                    if len(divs) < 3:
+                        continue
+                    values = [d.get("title") or d.get_text(" ", strip=True) for d in divs]
+                    period, subject = values[0], values[2] if len(values) > 2 else None
+                    if not subject:
+                        continue
+                    lessons.append(
+                        {
+                            "day": days[index][0],
+                            "date": days[index][1],
+                            "period": period,
+                            "subject": subject,
+                            "class": values[3] if len(values) > 3 else None,
+                            "teacher": values[4] if len(values) > 4 else None,
+                        }
+                    )
+            break
+        return lessons
+
+    def reports(self) -> list[dict]:
+        data = self._get(EP_REPORTS.format(sid=self.student_id))
+        return (data or {}).get("Table") or [] if isinstance(data, dict) else []
+
+    def clubs_and_trips(self) -> list[dict]:
+        data = self._get(EP_CLUBS.format(sid=self.student_id))
+        return (data or {}).get("Table") or [] if isinstance(data, dict) else []
 
     def detentions(self) -> list[dict]:
         data = self._get(EP_DETENTIONS.format(sid=self.student_id))
