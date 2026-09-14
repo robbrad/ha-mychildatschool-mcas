@@ -10,7 +10,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import AttendanceDay, MCASAuthError, MCASClient, MCASError
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, WEEK_LOOKBACK_DAYS
+from .const import (
+    AUTH_FAILURES_BEFORE_REAUTH,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    WEEK_LOOKBACK_DAYS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,17 +52,31 @@ class MCASCoordinator(DataUpdateCoordinator):
         )
         self.client = client
         self.modules: dict[str, bool] | None = None
+        self._auth_failures = 0
         self._attendance: dict[date, AttendanceDay] = {}
         self._behaviour: dict[date, list[dict]] = {}
 
     async def _async_update_data(self) -> dict:
         try:
-            return await self.hass.async_add_executor_job(self._fetch)
+            data = await self.hass.async_add_executor_job(self._fetch)
         except MCASAuthError as err:
-            # Triggers HA's re-authentication flow rather than just erroring.
-            raise ConfigEntryAuthFailed(str(err)) from err
+            self._auth_failures += 1
+            # Don't demand re-authentication on the strength of one failure.
+            # MCAS answers every outcome with HTTP 200 and a rendered page, so a
+            # timeout or a momentary blip is indistinguishable from a bad
+            # password. Raising ConfigEntryAuthFailed immediately stops polling
+            # and waits for a human, which left the integration dead for hours
+            # after a single hiccup that the next poll would have cleared.
+            if self._auth_failures >= AUTH_FAILURES_BEFORE_REAUTH:
+                raise ConfigEntryAuthFailed(str(err)) from err
+            raise UpdateFailed(
+                f"{err} (attempt {self._auth_failures} of "
+                f"{AUTH_FAILURES_BEFORE_REAUTH} before asking you to sign in again)"
+            ) from err
         except MCASError as err:
             raise UpdateFailed(str(err)) from err
+        self._auth_failures = 0
+        return data
 
     def _window(self) -> list[date]:
         """School days to summarise: weekdays within the lookback window."""

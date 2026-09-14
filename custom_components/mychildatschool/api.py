@@ -143,9 +143,61 @@ class MCASClient:
         form["PasswordTextBox"] = self._password
         resp = self._s.post(url, data=form, timeout=30)
         if DASHBOARD_MARKER not in resp.url:
-            # MCAS re-renders the login page rather than returning an error status.
-            raise MCASAuthError("Login failed - check the email address and password")
+            raise MCASAuthError(self._describe_login_failure(resp))
         self._read_dashboard_context(resp.text)
+
+    @staticmethod
+    def _describe_login_failure(resp) -> str:
+        """Explain *why* a login did not reach the dashboard.
+
+        MCAS answers every outcome with HTTP 200 and simply renders a different
+        page, so the landing URL is the only signal. Reporting "check your
+        password" for all of them is misleading: a correct password can still be
+        held short by a terms-and-conditions page or a security-question setup,
+        which is exactly what a school can force after a password reset.
+        """
+        landed = (resp.url or "").rsplit("/", 1)[-1].split("?")[0]
+        interstitials = {
+            "MCSTermsAndConditions": (
+                "MyChildAtSchool is asking you to accept its terms and conditions. "
+                "Sign in at mychildatschool.com once and accept them, then retry."
+            ),
+            "MCSParentSecurityQuestions": (
+                "MyChildAtSchool is asking you to set security questions. "
+                "Sign in at mychildatschool.com once and complete them, then retry."
+            ),
+            "MCSAccountSettings": (
+                "MyChildAtSchool redirected to account settings, which usually "
+                "means it wants something completed on the account. Sign in "
+                "there once, then retry."
+            ),
+        }
+        for page, message in interstitials.items():
+            if page.lower() in (resp.url or "").lower():
+                return message
+
+        # Surface any validation text the login page rendered.
+        text = ""
+        try:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for node in soup.select(
+                "[id*=Error], [id*=Message], [id*=Validation], .alert"
+            ):
+                candidate = node.get_text(" ", strip=True)
+                if candidate and len(candidate) < 200:
+                    text = candidate
+                    break
+        except Exception:  # never let diagnostics mask the auth failure
+            pass
+
+        if text:
+            return f"Login rejected by MyChildAtSchool: {text}"
+        if landed and landed != "MCSParentLogin":
+            return (
+                f"Login did not reach the dashboard - MyChildAtSchool sent us to "
+                f"'{landed}'. Sign in at mychildatschool.com to see what it wants."
+            )
+        return "Login failed - check the email address and password"
 
     @staticmethod
     def _hidden_fields(html: str) -> dict[str, str]:

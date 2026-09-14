@@ -60,6 +60,12 @@ CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=30)
+# Consecutive authentication failures tolerated before asking the user to sign in
+# again. MCAS returns HTTP 200 and a rendered page for every outcome, so a blip is
+# indistinguishable from a wrong password; demanding re-auth on the first failure
+# left the integration dead until it was restarted by hand, when the very next
+# poll would have recovered on its own.
+AUTH_FAILURES_BEFORE_REAUTH = 3
 # How many calendar days back to consider "this week" when summarising.
 WEEK_LOOKBACK_DAYS = 7
 # Marks that count as the pupil being in school.
